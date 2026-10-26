@@ -1,0 +1,48 @@
+name: Release
+
+# Push a tag like v1.2.0 to build the app and publish it as a GitHub release:
+#   git tag v1.2.0 && git push origin v1.2.0
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS 26 so the build has Apple's FoundationModels framework (the default engine).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: ./build.sh
+
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PLIST="build/Break It Down.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "$PLIST"
+          # Editing the plist invalidates the signature, so sign again.
+          codesign --force --sign - "build/Break It Down.app"
+          codesign --verify --verbose "build/Break It Down.app"
+
+      - name: Package
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Break It Down.app" "BreakItDown-${GITHUB_REF_NAME}.zip"
+          shasum -a 256 "BreakItDown-${GITHUB_REF_NAME}.zip" > "BreakItDown-${GITHUB_REF_NAME}.zip.sha256"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "BreakItDown-${GITHUB_REF_NAME}.zip" \
+            "BreakItDown-${GITHUB_REF_NAME}.zip.sha256" \
+            --title "Break It Down ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "Unzip and drag **Break It Down** to Applications. The app isn't notarized, so the first time, right-click it and choose Open. Needs macOS 14 or later; Apple Intelligence (the default engine) needs macOS 26."
